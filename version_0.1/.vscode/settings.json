@@ -1,0 +1,19 @@
+{
+    "files.associations": {
+        "string": "cpp",
+        "xiosbase": "cpp",
+        "streambuf": "cpp",
+        "xstring": "cpp",
+        "utility": "cpp",
+        "queue": "cpp",
+        "array": "cpp",
+        "*.tcc": "cpp",
+        "vector": "cpp",
+        "exception": "cpp",
+        "functional": "cpp",
+        "istream": "cpp",
+        "limits": "cpp",
+        "ostream": "cpp",
+        "sstream": "cpp"
+    }
+}
