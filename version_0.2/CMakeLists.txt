@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
-project(WebServer0.1)
+project(WebServer0.2)
+add_definitions(-std=c++11)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
@@ -23,10 +24,10 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 set(CMAKE_CXX_FLAGS "-std=c++11")
 set( CMAKE_BUILD_TYPE "Debug" )
 set(SOURCES
-    epoll.cpp
-    main.cpp
-    requestData.cpp
+    myepoll.cpp
     threadpool.cpp
+    server.cpp
+    requestData.cpp
     util.cpp)
 add_executable(${PROJECT_NAME} ${SOURCES})
 

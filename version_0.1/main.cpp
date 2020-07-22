@@ -76,8 +76,11 @@ int socket_bind_listen(int port)
 
 void myHandler(void *args)
 {
+    //log
+    std::cout << "[SERVER]My handler start" << std::endl;
     requestData *req_data = (requestData*)args;
     req_data->handleRequest();
+    std::cout << "[SERVER]My handler end" << std::endl;
 }
 
 void acceptConnection(int listen_fd, int epoll_fd, const string &path)
@@ -88,6 +91,8 @@ void acceptConnection(int listen_fd, int epoll_fd, const string &path)
     int accept_fd = 0;
     while((accept_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_addr_len)) > 0)
     {
+        //log
+        std::cout << "[SERVER]accept_fd:" << accept_fd << std::endl;
         /*
         // TCP的保活机制默认是关闭的
         int optval = 0;
@@ -116,6 +121,8 @@ void acceptConnection(int listen_fd, int epoll_fd, const string &path)
         pthread_mutex_lock(&qlock);
         myTimerQueue.push(mtimer);
         pthread_mutex_unlock(&qlock);
+        //log
+        std::cout << "[SERVER]Accept Ends" << std::endl;
     }
     //if(accept_fd == -1)
      //   perror("accept");
@@ -132,7 +139,7 @@ void handle_events(int epoll_fd, int listen_fd, struct epoll_event* events, int 
         // 有事件发生的描述符为监听描述符
         if(fd == listen_fd)
         {
-            //cout << "This is listen_fd" << endl;
+            cout << "This is listen_fd" << endl;
             acceptConnection(listen_fd, epoll_fd, path);
         }
         else
@@ -148,6 +155,8 @@ void handle_events(int epoll_fd, int listen_fd, struct epoll_event* events, int 
 
             // 将请求任务加入到线程池中
             // 加入线程池之前将Timer和request分离
+            //log
+            std::cout << "[SERVER]Write fd: " << fd << std::endl;
             request->seperateTimer();
             int rc = threadpool_add(tp, myHandler, events[i].data.ptr, 0);
         }
@@ -167,17 +176,22 @@ void handle_events(int epoll_fd, int listen_fd, struct epoll_event* events, int 
 
 void handle_expired_event()
 {
+    //log
+    std::cout << "[SERVER]Handle Expired Start" << std::endl;
+    std::cout << "[SERVER]Handle Expired Queue Size" << myTimerQueue.size() << std::endl;
     pthread_mutex_lock(&qlock);
     while (!myTimerQueue.empty())
     {
         mytimer *ptimer_now = myTimerQueue.top();
         if (ptimer_now->isDeleted())
         {
+            std::cout << "[Handle Expires] isDeleted" << std::endl;
             myTimerQueue.pop();
             delete ptimer_now;
         }
         else if (ptimer_now->isvalid() == false)
         {
+            std::cout << "[Handle Expires] is invalid" << std::endl;
             myTimerQueue.pop();
             delete ptimer_now;
         }
@@ -187,6 +201,8 @@ void handle_expired_event()
         }
     }
     pthread_mutex_unlock(&qlock);
+    //log
+    std::cout << "[SERVER]Handle Expired Ends" << std::endl;
 }
 
 int main()

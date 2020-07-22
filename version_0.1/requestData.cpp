@@ -73,6 +73,8 @@ requestData::requestData(int _epollfd, int _fd, std::string _path):
 requestData::~requestData()
 {
     cout << "~requestData()" << endl;
+    std::cout << "fd:" << fd << std::endl;
+    std::cout << "keep_alive:" << keep_alive << std::endl;
     struct epoll_event ev;
     // 超时的一定都是读请求，没有"被动"写。
     ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
@@ -103,6 +105,7 @@ void requestData::setFd(int _fd)
 
 void requestData::reset()
 {
+    std::cout <<"[RequestData]reset" << std::endl;
     againTimes = 0;
     content.clear();
     file_name.clear();
@@ -125,6 +128,8 @@ void requestData::seperateTimer()
 
 void requestData::handleRequest()
 {
+    //log
+    std::cout << "[RequestData]Handle Request Start" << std::endl;
     char buff[MAX_BUFF];
     bool isError = false;
     while (true)
@@ -238,7 +243,8 @@ void requestData::handleRequest()
         // 若keep alive 则将当前request重置
         if (keep_alive)
         {
-            printf("ok\n");
+            //log
+            std::cout << "[RequestData] It's a keep alive link." << std::endl;
             this->reset();
         }
         else
@@ -264,6 +270,9 @@ void requestData::handleRequest()
         delete this;
         return;
     }
+    //log
+    std::cout << "[RequestData]Handle Request Ends" << std::endl;
+
 }
 
 int requestData::parse_URI()
@@ -325,7 +334,7 @@ int requestData::parse_URI()
                 
             else
                 file_name = "index.html";
-            // std::cout << file_name << std::endl;
+            std::cout << file_name << std::endl;
         }
         pos = _pos;
     }
