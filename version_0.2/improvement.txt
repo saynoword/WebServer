@@ -36,3 +36,7 @@ Linux Programmer's Manual 中第六个问题：
 
 当调用close()关闭对应的fd时，会使相应的引用计数减一，只有减到0时，epoll才会真的删掉它，所以，比较安全的做法是：
 先del掉它，再close它(如果不确定close是否真的关闭了这个文件。)。
+
+Problems:
+1. WebBench测试后，server会自动停止
+2. 性能不佳。
