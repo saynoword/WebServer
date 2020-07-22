@@ -1,6 +1,6 @@
 #include "requestData.h"
 #include "util.h"
-#include "epoll.h"
+#include "myepoll.h"
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -14,21 +14,23 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
+
+#include <mutex>
 using namespace cv;
 
 //test
 #include <iostream>
 using namespace std;
 
-pthread_mutex_t qlock = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t MimeType::lock = PTHREAD_MUTEX_INITIALIZER;
 std::unordered_map<std::string, std::string> MimeType::mime;
+std::mutex MimeType::mimeMtx;
+std::mutex mytimer::timerMtx;
 
 std::string MimeType::getMime(const std::string &suffix)
 {
     if (mime.size() == 0)
     {
-        pthread_mutex_lock(&lock);
+        std::unique_lock<std::mutex> lck(mimeMtx);
         if (mime.size() == 0)
         {
             mime[".html"] = "text/html";
@@ -46,7 +48,6 @@ std::string MimeType::getMime(const std::string &suffix)
             mime[".mp3"] = "audio/mp3";
             mime["default"] = "text/html";
         }
-        pthread_mutex_unlock(&lock);
     }
     if (mime.find(suffix) == mime.end())
         return mime["default"];
@@ -55,40 +56,42 @@ std::string MimeType::getMime(const std::string &suffix)
 }
 
 
-priority_queue<mytimer*, deque<mytimer*>, timerCmp> myTimerQueue;
+priority_queue<std::shared_ptr<mytimer>, deque<std::shared_ptr<mytimer>>, timerCmp> mytimer::myTimerQueue;
 
 requestData::requestData(): 
     now_read_pos(0), state(STATE_PARSE_URI), h_state(h_start), 
-    keep_alive(false), againTimes(0), timer(NULL)
+    keep_alive(false), againTimes(0)
 {
     cout << "requestData constructed !" << endl;
 }
 
 requestData::requestData(int _epollfd, int _fd, std::string _path):
     now_read_pos(0), state(STATE_PARSE_URI), h_state(h_start), 
-    keep_alive(false), againTimes(0), timer(NULL),
+    keep_alive(false), againTimes(0),
     path(_path), fd(_fd), epollfd(_epollfd)
 {}
 
 requestData::~requestData()
 {
     cout << "~requestData()" << endl;
-    struct epoll_event ev;
-    // 超时的一定都是读请求，没有"被动"写。
-    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-    ev.data.ptr = (void*)this;
-    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, &ev); // 析构时从epoll中删除当前request
-    if (timer)
-    {
-        timer->clearReq();
-        timer = NULL;
-    }
+    cout << "fd:" << fd << std::endl;
+    // struct epoll_event ev;
+    // // 超时的一定都是读请求，没有"被动"写。
+    // ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    // ev.data.ptr = (void*)this;
+    // epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, &ev); // 析构时从epoll中删除当前request
+    // if (!timer.expired())
+    // {
+    //     std::shared_ptr<mytimer> tmpTimer = timer.lock();
+    //     tmpTimer->clearReq();
+    //     timer.reset();
+    // }
     close(fd);
 }
 
-void requestData::addTimer(mytimer *mtimer)
+void requestData::addTimer(std::shared_ptr<mytimer> mtimer)
 {
-    if (timer == NULL)
+    // if (timer.expired())
         timer = mtimer;
 }
 
@@ -116,15 +119,17 @@ void requestData::reset()
 
 void requestData::seperateTimer()
 {
-    if (timer)
+    if (!timer.expired())
     {
-        timer->clearReq();
-        timer = NULL;
+        std::shared_ptr<mytimer> tmptimer(timer.lock());
+        tmptimer->clearReq();
+        timer.reset();
     }
 }
 
 void requestData::handleRequest()
 {
+    INFO("[RequestData]Handle Request Start");
     char buff[MAX_BUFF];
     bool isError = false;
     while (true)
@@ -227,10 +232,8 @@ void requestData::handleRequest()
             }
         }
     }
-
     if (isError)
     {
-        delete this;
         return;
     }
     if (state == STATE_FINISH)
@@ -238,30 +241,28 @@ void requestData::handleRequest()
         // 若keep alive 则将当前request重置
         if (keep_alive)
         {
-            printf("ok\n");
+            printf("[RequestData]keep alive\n");
             this->reset();
         }
         else
         {
-            delete this;
             return;
         }
     }
     // 若keep_alive,或者parseagain，则将该requestData继续放入epoll
     // 一定要先加时间信息，否则可能会出现刚加进去，下个in触发来了，然后分离失败后，又加入队列，最后超时被删，然后正在线程中进行的任务出错，double free错误。
     // 新增时间信息
-    pthread_mutex_lock(&qlock);
-    mytimer *mtimer = new mytimer(this, 500);
+    std::shared_ptr<mytimer> mtimer = std::make_shared<mytimer> (shared_from_this(), 500);
     timer = mtimer;
-    myTimerQueue.push(mtimer);
-    pthread_mutex_unlock(&qlock);
-
+    {
+        std::unique_lock<std::mutex> lck(mytimer::timerMtx); 
+        mytimer::myTimerQueue.push(mtimer);
+    }
     __uint32_t _epo_event = EPOLLIN | EPOLLET | EPOLLONESHOT;
-    int ret = epoll_mod(epollfd, fd, static_cast<void*>(this), _epo_event);
+    int ret = myepoll::epoll_mod(fd, shared_from_this(), _epo_event);
     if (ret < 0)
     {
         // 返回错误处理
-        delete this;
         return;
     }
 }
@@ -586,7 +587,7 @@ void requestData::handleError(int fd, int err_num, string short_msg)
     writen(fd, send_buff, strlen(send_buff));
 }
 
-mytimer::mytimer(requestData *_request_data, int timeout): deleted(false), request_data(_request_data)
+mytimer::mytimer(std::shared_ptr<requestData> _request_data, int timeout): deleted(false), request_data(_request_data)
 {
     //cout << "mytimer()" << endl;
     struct timeval now;
@@ -598,14 +599,11 @@ mytimer::mytimer(requestData *_request_data, int timeout): deleted(false), reque
 mytimer::~mytimer()
 {
     cout << "~mytimer()" << endl;
-    if (request_data != NULL)
-    {
-        cout << "request_data=" << request_data << endl;
-        delete request_data;
-        // request_data = NULL;//多余？requestData 析构时，已经将timer->request_data置为NULL
-    }
+    if(request_data){
+        std::cout << "fd:" << request_data->getFd() << std::endl;
+        myepoll::epoll_del(request_data->getFd(), EPOLLIN | EPOLLET | EPOLLONESHOT);
+    } 
 }
-
 void mytimer::update(int timeout)
 {
     struct timeval now;
@@ -613,7 +611,7 @@ void mytimer::update(int timeout)
     expired_time = ((now.tv_sec * 1000) + (now.tv_usec / 1000)) + timeout;
 }
 
-bool mytimer::isvalid()
+bool mytimer::isValid()
 {
     struct timeval now;
     gettimeofday(&now, NULL);
@@ -631,7 +629,7 @@ bool mytimer::isvalid()
 
 void mytimer::clearReq()
 {
-    request_data = NULL;
+    request_data.reset();
     this->setDeleted();
 }
 
@@ -650,7 +648,27 @@ size_t mytimer::getExpTime() const
     return expired_time;
 }
 
-bool timerCmp::operator()(const mytimer *a, const mytimer *b) const
+void mytimer::handle_expired(){
+    INFO("[MyTimer]Handle Expired Start");
+    std::cout <<"[MyTimer]Queue Size:" << myTimerQueue.size() << std::endl;
+    std::unique_lock<std::mutex> lck(timerMtx);
+    while(!myTimerQueue.empty()){
+        std::shared_ptr<mytimer> mtimer = myTimerQueue.top();
+        if(mtimer->isDeleted()){
+            std::cout << "isDeleted" << std::endl;
+            myTimerQueue.pop(); 
+        } 
+        else if(!mtimer->isValid()){
+            std::cout << "is invalid" << std::endl;
+            myTimerQueue.pop(); 
+        }
+        else{
+            break; 
+        }
+    }
+    INFO("[MyTimer]Handle Expired End");
+}
+bool timerCmp::operator()(std::shared_ptr<mytimer> &a, std::shared_ptr<mytimer> &b) const
 {
     return a->getExpTime() > b->getExpTime();
 }

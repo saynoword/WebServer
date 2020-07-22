@@ -2,6 +2,11 @@
 #define REQUESTDATA
 #include <string>
 #include <unordered_map>
+#include <memory>
+#include <mutex>
+#include <queue>
+
+#define TIMER_TIME_OUT 500
 
 const int STATE_PARSE_URI = 1;
 const int STATE_PARSE_HEADERS = 2;
@@ -38,6 +43,7 @@ class MimeType
 {
 private:
     static pthread_mutex_t lock;
+    static std::mutex mimeMtx;
     static std::unordered_map<std::string, std::string> mime;
     MimeType();
     MimeType(const MimeType &m);
@@ -58,10 +64,10 @@ enum HeadersState
     h_end_LF
 };
 
-struct mytimer;
-struct requestData;
+class mytimer;
+class requestData;
 
-struct requestData
+class requestData : public std::enable_shared_from_this<requestData>
 {
 private:
     int againTimes;
@@ -79,7 +85,7 @@ private:
     bool isfinish;
     bool keep_alive;
     std::unordered_map<std::string, std::string> headers;
-    mytimer *timer;
+    std::weak_ptr<mytimer> timer; 
 
 private:
     int parse_URI();
@@ -87,11 +93,10 @@ private:
     int analysisRequest();
 
 public:
-
     requestData();
     requestData(int _epollfd, int _fd, std::string _path);
     ~requestData();
-    void addTimer(mytimer *mtimer);
+    void addTimer(std::shared_ptr<mytimer>);
     void reset();
     void seperateTimer();
     int getFd();
@@ -100,24 +105,30 @@ public:
     void handleError(int fd, int err_num, std::string short_msg);
 };
 
-struct mytimer
+struct timerCmp
 {
+    bool operator()(std::shared_ptr<mytimer> &a, std::shared_ptr<mytimer> &b) const;
+};
+
+class mytimer
+{
+public:
+    static std::mutex timerMtx;
+    static std::priority_queue<std::shared_ptr<mytimer>, std::deque<std::shared_ptr<mytimer>>,timerCmp> myTimerQueue;
     bool deleted;
     size_t expired_time;
-    requestData *request_data;
+    std::shared_ptr<requestData> request_data;
 
-    mytimer(requestData *_request_data, int timeout);
+    mytimer(std::shared_ptr<requestData> request_data, int timeout);
     ~mytimer();
     void update(int timeout);
-    bool isvalid();
+    bool isValid();
     void clearReq();
     void setDeleted();
     bool isDeleted() const;
     size_t getExpTime() const;
+    static void handle_expired();
 };
 
-struct timerCmp
-{
-    bool operator()(const mytimer *a, const mytimer *b) const;
-};
+
 #endif
